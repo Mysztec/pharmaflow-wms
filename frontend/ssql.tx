@@ -1,0 +1,229 @@
+-- ============================================================
+-- PharmaFlow WMS — Script SQL para PostgreSQL
+-- Controle Hospitalar de Medicamentos
+-- ============================================================
+
+-- Extensão para UUID
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ============================================================
+-- TABELA: produtos
+-- ============================================================
+CREATE TABLE produtos (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nome          VARCHAR(200)  NOT NULL,
+    dosagem       VARCHAR(50)   NOT NULL,           -- ex: "500mg", "10ml"
+    principio_ativo VARCHAR(200) NOT NULL,
+    forma_farmaceutica VARCHAR(50),                  -- ex: "comprimido", "xarope"
+    codigo_anvisa VARCHAR(30)   UNIQUE,
+    fabricante    VARCHAR(150),
+    ativo         BOOLEAN DEFAULT TRUE,
+    criado_em     TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABELA: lotes
+-- ============================================================
+CREATE TABLE lotes (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    produto_id      UUID NOT NULL REFERENCES produtos(id) ON DELETE RESTRICT,
+    numero_lote     VARCHAR(50)  NOT NULL,
+    data_fabricacao DATE         NOT NULL,
+    data_validade   DATE         NOT NULL,
+    criado_em       TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT lote_validade_check
+        CHECK (data_validade > data_fabricacao),
+
+    UNIQUE (produto_id, numero_lote)
+);
+
+-- ============================================================
+-- TABELA: localizacoes
+-- ============================================================
+CREATE TABLE localizacoes (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    codigo        VARCHAR(30)  NOT NULL UNIQUE,  -- ex: "A-01-02-03"
+    descricao     VARCHAR(200),
+    corredor      VARCHAR(10),
+    prateleira    VARCHAR(10),
+    posicao       VARCHAR(10),
+    setor         VARCHAR(100),                  -- ex: "Almoxarifado Central"
+    ativo         BOOLEAN DEFAULT TRUE
+);
+
+-- ============================================================
+-- TABELA: estoque
+-- ============================================================
+CREATE TABLE estoque (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lote_id          UUID NOT NULL REFERENCES lotes(id) ON DELETE RESTRICT,
+    localizacao_id   UUID NOT NULL REFERENCES localizacoes(id) ON DELETE RESTRICT,
+    quantidade       INTEGER NOT NULL DEFAULT 0,
+    quantidade_minima INTEGER NOT NULL DEFAULT 0,
+    atualizado_em    TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT estoque_quantidade_positiva
+        CHECK (quantidade >= 0),
+
+    UNIQUE (lote_id, localizacao_id)
+);
+
+-- ============================================================
+-- TABELA: usuarios_sistema (referência interna)
+-- ============================================================
+CREATE TABLE usuarios_sistema (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nome       VARCHAR(150) NOT NULL,
+    matricula  VARCHAR(30)  NOT NULL UNIQUE,
+    cargo      VARCHAR(100),
+    setor      VARCHAR(100),
+    ativo      BOOLEAN DEFAULT TRUE,
+    criado_em  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABELA: setores_destino
+-- ============================================================
+CREATE TABLE setores_destino (
+    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nome      VARCHAR(150) NOT NULL UNIQUE,
+    tipo      VARCHAR(50)           -- ex: "UTI", "Enfermaria", "Farmácia"
+);
+
+-- ============================================================
+-- TABELA: movimentacoes
+-- ============================================================
+CREATE TYPE tipo_movimentacao AS ENUM ('entrada', 'saida', 'transferencia', 'devolucao', 'descarte');
+
+CREATE TABLE movimentacoes (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo              tipo_movimentacao NOT NULL,
+    lote_id           UUID NOT NULL REFERENCES lotes(id) ON DELETE RESTRICT,
+    estoque_id        UUID NOT NULL REFERENCES estoque(id) ON DELETE RESTRICT,
+    quantidade        INTEGER NOT NULL,
+    usuario_id        UUID NOT NULL REFERENCES usuarios_sistema(id) ON DELETE RESTRICT,
+    setor_destino_id  UUID REFERENCES setores_destino(id),
+    observacoes       TEXT,
+    documento_ref     VARCHAR(100),                -- NF, requisição, etc.
+    realizado_em      TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT movimentacao_quantidade_positiva
+        CHECK (quantidade > 0)
+);
+
+-- ============================================================
+-- CONSTRAINT CRÍTICA: Impede saída de medicamentos vencidos
+-- para pacientes (tipos: saida, transferencia)
+-- ============================================================
+CREATE OR REPLACE FUNCTION verificar_validade_na_saida()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_data_validade DATE;
+BEGIN
+    -- Aplicar somente para saídas e transferências
+    IF NEW.tipo IN ('saida', 'transferencia') THEN
+        SELECT l.data_validade
+        INTO v_data_validade
+        FROM lotes l
+        WHERE l.id = NEW.lote_id;
+
+        IF v_data_validade < CURRENT_DATE THEN
+            RAISE EXCEPTION
+                'OPERAÇÃO BLOQUEADA: O lote selecionado venceu em %. Medicamentos vencidos não podem ser dispensados para pacientes.',
+                TO_CHAR(v_data_validade, 'DD/MM/YYYY');
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_bloquear_saida_vencido
+    BEFORE INSERT ON movimentacoes
+    FOR EACH ROW
+    EXECUTE FUNCTION verificar_validade_na_saida();
+
+-- ============================================================
+-- TRIGGER: Atualiza quantidade em estoque após movimentação
+-- ============================================================
+CREATE OR REPLACE FUNCTION atualizar_estoque_apos_movimentacao()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.tipo IN ('entrada', 'devolucao') THEN
+        UPDATE estoque
+        SET quantidade = quantidade + NEW.quantidade,
+            atualizado_em = NOW()
+        WHERE id = NEW.estoque_id;
+
+    ELSIF NEW.tipo IN ('saida', 'transferencia', 'descarte') THEN
+        -- Verifica se há saldo suficiente
+        IF (SELECT quantidade FROM estoque WHERE id = NEW.estoque_id) < NEW.quantidade THEN
+            RAISE EXCEPTION
+                'SALDO INSUFICIENTE: Quantidade solicitada (%) maior que o estoque disponível.',
+                NEW.quantidade;
+        END IF;
+
+        UPDATE estoque
+        SET quantidade = quantidade - NEW.quantidade,
+            atualizado_em = NOW()
+        WHERE id = NEW.estoque_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_atualizar_estoque
+    AFTER INSERT ON movimentacoes
+    FOR EACH ROW
+    EXECUTE FUNCTION atualizar_estoque_apos_movimentacao();
+
+-- ============================================================
+-- VIEW: Estoque consolidado com alertas de validade
+-- ============================================================
+CREATE OR REPLACE VIEW vw_estoque_consolidado AS
+SELECT
+    p.nome                                      AS produto,
+    p.dosagem,
+    p.principio_ativo,
+    l.numero_lote,
+    l.data_validade,
+    loc.codigo                                  AS localizacao,
+    loc.setor,
+    e.quantidade,
+    e.quantidade_minima,
+    CASE
+        WHEN l.data_validade < CURRENT_DATE
+            THEN 'VENCIDO'
+        WHEN l.data_validade < CURRENT_DATE + INTERVAL '30 days'
+            THEN 'VENCE_EM_30_DIAS'
+        WHEN e.quantidade <= e.quantidade_minima
+            THEN 'ESTOQUE_MINIMO'
+        ELSE 'OK'
+    END                                         AS status_alerta
+FROM estoque e
+JOIN lotes l      ON l.id = e.lote_id
+JOIN produtos p   ON p.id = l.produto_id
+JOIN localizacoes loc ON loc.id = e.localizacao_id
+WHERE p.ativo = TRUE
+ORDER BY
+    CASE WHEN l.data_validade < CURRENT_DATE THEN 0
+         WHEN l.data_validade < CURRENT_DATE + INTERVAL '30 days' THEN 1
+         ELSE 2 END,
+    l.data_validade ASC;
+
+-- ============================================================
+-- ÍNDICES para performance
+-- ============================================================
+CREATE INDEX idx_lotes_produto    ON lotes(produto_id);
+CREATE INDEX idx_lotes_validade   ON lotes(data_validade);
+CREATE INDEX idx_estoque_lote     ON estoque(lote_id);
+CREATE INDEX idx_movimentacoes_lote    ON movimentacoes(lote_id);
+CREATE INDEX idx_movimentacoes_data    ON movimentacoes(realizado_em DESC);
+CREATE INDEX idx_movimentacoes_usuario ON movimentacoes(usuario_id);
+
+-- ============================================================
+-- FIM DO SCRIPT
+-- ============================================================

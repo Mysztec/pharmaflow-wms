@@ -1,0 +1,1 @@
+export default function MapaEstoque() { return <div>MapaEstoque</div> }

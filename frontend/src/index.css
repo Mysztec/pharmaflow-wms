@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  /* Definindo as cores do PharmaFlow dentro do motor do Tailwind */
+  --color-background: #0f1113;
+  --color-card: #1a1c1e;
+  --color-primary: #ff5722;
+  --color-border: rgba(255, 255, 255, 0.05);
+}
+
+/* Estilos Globais para garantir o fundo escuro em toda a aplicação */
+:root {
+  background-color: #0f1113;
+  color: #ffffff;
+  color-scheme: dark; /* Avisa ao navegador para usar barras de rolagem escuras */
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0f1113;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Classe de brilho para os elementos laranjas (como no seu projeto original) */
+.glow-orange {
+  box-shadow: 0 0 15px rgba(255, 87, 34, 0.3);
+}
