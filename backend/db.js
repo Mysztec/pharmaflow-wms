@@ -1,11 +1,10 @@
 const { Pool } = require('pg');
 
-// Use as credenciais que você configurou no seu pgAdmin
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'pharmaflow_db', // Nome do banco que você criou
-  password: '4790',
+  user: 'user',        // Usuário definido no Docker
+  password: 'password', // Senha definida no Docker
+  database: 'pharmaflow_db',
+  host: 'db',          // O nome do contêiner na rede do Docker
   port: 5432,
 });
 

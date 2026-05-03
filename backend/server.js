@@ -43,4 +43,4 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-app.listen(3001, () => console.log("🚀 Backend PharmaFlow na porta 3001"));
+app.listen(3001, '0.0.0.0', () => console.log());

@@ -1,0 +1,34 @@
+version: '3.9'
+
+services:
+  backend:
+    image: myszka/pharmaflow-backend:latest
+    container_name: pharma_backend
+    ports:
+      - "3001:3001" # Mantendo a 3001 que já está funcionando
+    environment:
+      - DB_HOST=db
+    depends_on:
+      - db
+
+  frontend:
+    image: myszka/pharmaflow-frontend:latest
+    container_name: pharma_frontend
+    ports:
+      - "80:3001" # Porta padrão da web
+    depends_on:
+      - backend
+
+  db:
+    image: postgres:18-alpine # Mantendo a versão 18 que você precisa
+    container_name: pharma_db
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pharmaflow_db # Nome exato que está no seu db.js
+    volumes:
+      - db_data:/var/lib/postgresql # Estrutura que resolveu o loop no Windows
+
+volumes:
+  db_data:

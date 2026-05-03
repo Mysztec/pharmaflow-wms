@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const pharmaApi = axios.create({
-  baseURL: 'http://localhost:3001', 
+  baseURL: 'http://18.216.138.110:3001', 
   headers: { 'Content-Type': 'application/json' },
 });
 
