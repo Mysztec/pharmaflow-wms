@@ -1,36 +1,10 @@
-apiVersion: apps/v1 #
-kind: Deployment #
-metadata: #
-  name: frontend-deployment #
-  labels: #
-    app: frontend #
-spec: #
-  replicas: 2 #
-  selector: #
-    matchLabels: #
-      app: frontend #
-  template: #
-    metadata: #
-      labels: #
-        app: frontend #
-    spec: #
-      containers: #
-      - name: frontend #
-        image: seunome/meu-frontend:latest #
-        ports: #
-        - containerPort: 80 #
-        env: #
-        - name: REACT_APP_API_URL #
-          valueFrom: #
-            configMapKeyRef: #
-              name: app-config #
-              key: API_URL #
-              apiVersion: apps/v1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend-deployment
   labels:
     app: frontend
+    project: pharmaflow
 spec:
   replicas: 2
   selector:
@@ -43,7 +17,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: seunome/meu-frontend:latest
+        image: mysztec/pharmaflow-frontend:latest
         ports:
         - containerPort: 80
         env:
@@ -52,3 +26,9 @@ spec:
             configMapKeyRef:
               name: app-config
               key: API_URL
+        # Caso precise de outras variáveis do ConfigMap ou Secret:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: NODE_ENV

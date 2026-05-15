@@ -3,9 +3,9 @@ kind: ConfigMap
 metadata:
   name: app-config
   labels:
-    app: meu-projeto
+    app: pharmaflow
 data:
-  DB_HOST: "postgres"
+  DB_HOST: "postgres-service"
   DB_PORT: "5432"
-  NODE_ENV: "development"
-  API_URL: "http://backend-service:8080"
+  NODE_ENV: "production"
+  API_URL: "http://sistema.seudominio.com/api"
